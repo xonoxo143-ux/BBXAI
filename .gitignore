@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Audio working files
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# Keep docs and tiny examples intentional; do not commit personal recordings by accident.
+
+# Generated reports / scratch output
+results/*.json
+results/*.wav
+results/*.mp3
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
