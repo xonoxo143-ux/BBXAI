@@ -1,0 +1,85 @@
+name: Build Wind Tunnel Source Bundle
+
+on:
+  push:
+    branches:
+      - tmp/wind-tunnel-packager
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Build source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/repos bundle/meta
+
+          clone_snapshot() {
+            repo="$1"
+            dest="$2"
+            branch="${3:-}"
+            if [ -n "$branch" ]; then
+              git clone --depth 1 --branch "$branch" "https://github.com/${repo}.git" "bundle/repos/${dest}"
+            else
+              git clone --depth 1 "https://github.com/${repo}.git" "bundle/repos/${dest}"
+            fi
+            sha=$(git -C "bundle/repos/${dest}" rev-parse HEAD)
+            url=$(git -C "bundle/repos/${dest}" remote get-url origin)
+            printf '%s\n' "$sha" > "bundle/meta/${dest}.commit.txt"
+            printf '%s\n' "$url" > "bundle/meta/${dest}.upstream.txt"
+            rm -rf "bundle/repos/${dest}/.git"
+          }
+
+          clone_snapshot "valentil/stl-wind-tunnel" "stl-wind-tunnel"
+          clone_snapshot "simzero/cfd-xyz-viewer" "cfd-xyz-viewer"
+          clone_snapshot "OpenFOAM/OpenFOAM-13" "OpenFOAM-13"
+          clone_snapshot "OpenFOAM/ThirdParty-13" "ThirdParty-13"
+
+          cat > bundle/README_BUNDLE.md <<'EOF'
+          # Wind Tunnel Source Bundle
+
+          Consolidated source snapshots for Android/mobile CFD and wind-tunnel experimentation.
+
+          Included:
+          - valentil/stl-wind-tunnel
+          - simzero/cfd-xyz-viewer
+          - OpenFOAM/OpenFOAM-13
+          - OpenFOAM/ThirdParty-13
+
+          Each snapshot is pinned by commit SHA in `meta/`. Nested `.git` histories are intentionally removed to keep the working bundle compact; exact upstream remotes are recorded in `meta/`.
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json
+          root = Path('bundle')
+          files = []
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  h = hashlib.sha256()
+                  with p.open('rb') as f:
+                      for chunk in iter(lambda: f.read(1024*1024), b''):
+                          h.update(chunk)
+                  files.append({'path': p.relative_to(root).as_posix(), 'bytes': p.stat().st_size, 'sha256': h.hexdigest()})
+          (root/'meta'/'bundle_manifest.json').write_text(json.dumps({'files': files}, indent=2))
+          PY
+
+          (cd bundle && zip -qry -y ../wind-tunnel-source-bundle.zip .)
+          sha256sum wind-tunnel-source-bundle.zip > wind-tunnel-source-bundle.zip.sha256
+          ls -lh wind-tunnel-source-bundle.zip
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wind-tunnel-source-bundle
+          path: |
+            wind-tunnel-source-bundle.zip
+            wind-tunnel-source-bundle.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
