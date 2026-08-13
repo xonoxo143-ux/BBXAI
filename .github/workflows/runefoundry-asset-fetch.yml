@@ -24,7 +24,7 @@ jobs:
           npm init -y >/dev/null 2>&1
           npm install --no-save playwright@1.54.2 >/dev/null
 
-          cat > /tmp/fetch.mjs <<'JS'
+          cat > fetch-quaternius.mjs <<'JS'
           import { chromium } from 'playwright';
           import fs from 'fs';
 
@@ -43,11 +43,8 @@ jobs:
           const free = page.getByText('No thanks, just take me to the downloads', {exact:false}).first();
           if (await free.count() === 0) throw new Error('itch free-download link not found');
           console.log('clicking free download route');
-          await Promise.all([
-            page.waitForLoadState('domcontentloaded').catch(()=>{}),
-            free.click()
-          ]);
-          await page.waitForTimeout(2500);
+          await free.click();
+          await page.waitForTimeout(3000);
           console.log('download page', page.url());
           fs.writeFileSync('asset-fetch/diagnostics/downloads.html', await page.content());
           await page.screenshot({path:'asset-fetch/diagnostics/downloads.png', fullPage:true});
@@ -72,7 +69,7 @@ jobs:
           await browser.close();
           JS
 
-          node /tmp/fetch.mjs
+          node ./fetch-quaternius.mjs
 
       - name: Verify and inventory official pack
         shell: bash
