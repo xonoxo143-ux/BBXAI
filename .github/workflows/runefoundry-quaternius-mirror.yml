@@ -1,0 +1,51 @@
+name: RuneFoundry Quaternius Mirror Extract
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tmp/runefoundry-asset-runner
+    paths:
+      - .github/workflows/runefoundry-quaternius-mirror.yml
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone public mirror and extract attributed CC0 character files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/fastrouter/experiments-costa-vista.git donor
+          mkdir -p bundle
+          cp donor/ATTRIBUTION.md bundle/ATTRIBUTION.md
+          cp donor/public/assets/characters.glb bundle/characters.glb
+          cp donor/public/assets/manifest.json bundle/manifest.json
+          if [ -d donor/public/assets/toon/hair ]; then
+            cp -R donor/public/assets/toon/hair bundle/hair
+          fi
+          git -C donor rev-parse HEAD > bundle/MIRROR_COMMIT.txt
+          cat > bundle/README.md <<'EOF'
+          # RuneFoundry Quaternius mirror pilot
+
+          These files were extracted from `fastrouter/experiments-costa-vista` only where that repository's `ATTRIBUTION.md` identifies the upstream asset as Quaternius Universal Base Characters / Universal Animation Library under CC0 1.0.
+
+          This bundle is for local pipeline evaluation. Keep `ATTRIBUTION.md` and `MIRROR_COMMIT.txt` with the donor files so provenance is not lost.
+          EOF
+          (cd bundle && zip -qry ../runefoundry-quaternius-mirror-pilot.zip .)
+          sha256sum runefoundry-quaternius-mirror-pilot.zip > runefoundry-quaternius-mirror-pilot.zip.sha256
+          ls -lh runefoundry-quaternius-mirror-pilot.zip
+
+      - name: Upload pilot bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: runefoundry-quaternius-mirror-pilot
+          path: |
+            runefoundry-quaternius-mirror-pilot.zip
+            runefoundry-quaternius-mirror-pilot.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
