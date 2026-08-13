@@ -1,0 +1,54 @@
+name: RuneFoundry CC0 GitHub Assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tmp/runefoundry-asset-runner
+    paths:
+      - .github/workflows/runefoundry-github-assets.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone verified CC0 character donor
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/source bundle/meta
+          git clone --depth 1 https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0.git bundle/source/kaykit-adventurers
+          git -C bundle/source/kaykit-adventurers rev-parse HEAD > bundle/meta/kaykit-adventurers.commit.txt
+          cp bundle/source/kaykit-adventurers/LICENSE.txt bundle/meta/KAYKIT_LICENSE.txt
+          cp bundle/source/kaykit-adventurers/README.md bundle/meta/KAYKIT_README.md
+          rm -rf bundle/source/kaykit-adventurers/.git
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('bundle/source/kaykit-adventurers')
+          files=[]
+          for p in root.rglob('*'):
+              if p.is_file() and p.suffix.lower() in {'.glb','.gltf','.bin','.png','.jpg','.jpeg','.fbx','.tscn','.tres'}:
+                  files.append({'path':p.relative_to(root).as_posix(),'bytes':p.stat().st_size})
+          Path('bundle/meta/asset_inventory.json').write_text(json.dumps({'files':files},indent=2))
+          print(json.dumps({'asset_files':len(files),'bytes':sum(x['bytes'] for x in files)},indent=2))
+          PY
+
+          (cd bundle && zip -qry ../runefoundry-cc0-character-donor.zip .)
+          sha256sum runefoundry-cc0-character-donor.zip > runefoundry-cc0-character-donor.zip.sha256
+          ls -lh runefoundry-cc0-character-donor.zip
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: runefoundry-cc0-character-donor
+          path: |
+            runefoundry-cc0-character-donor.zip
+            runefoundry-cc0-character-donor.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
