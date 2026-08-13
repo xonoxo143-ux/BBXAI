@@ -14,7 +14,7 @@ permissions:
 jobs:
   fetch-assets:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Fetch official free Modular Character Outfits Fantasy pack
         shell: bash
@@ -27,36 +27,70 @@ jobs:
           cat > fetch-quaternius.mjs <<'JS'
           import { chromium } from 'playwright';
           import fs from 'fs';
+
           const executable = fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined;
           const browser = await chromium.launch({headless:true, executablePath:executable, args:['--no-sandbox']});
-          const context = await browser.newContext({acceptDownloads:true});
-          const page = await context.newPage();
-          page.setDefaultTimeout(30000);
           const purchase = 'https://quaternius.itch.io/modular-character-outfits-fantasy/purchase';
           const targetName = 'Modular Character Outfits - Fantasy[Standard].zip';
-          await page.goto(purchase, {waitUntil:'domcontentloaded', timeout:60000});
-          fs.writeFileSync('asset-fetch/diagnostics/purchase.html', await page.content());
-          const free = page.getByText('No thanks, just take me to the downloads', {exact:false}).first();
-          if (await free.count() === 0) throw new Error('itch free-download link not found');
-          await free.click();
-          await page.waitForTimeout(3000);
-          fs.writeFileSync('asset-fetch/diagnostics/downloads.html', await page.content());
-          await page.screenshot({path:'asset-fetch/diagnostics/downloads.png', fullPage:true});
-          let row = page.locator('.upload').filter({hasText:targetName}).first();
-          if (await row.count() === 0) row = page.locator('div').filter({hasText:targetName}).first();
-          if (await row.count() === 0) throw new Error('Standard outfit ZIP row not found');
-          let button = row.getByRole('button', {name:/download/i}).first();
-          if (await button.count() === 0) button = row.getByRole('link', {name:/download/i}).first();
-          if (await button.count() === 0) button = row.locator('a,button').filter({hasText:/download/i}).first();
-          const downloadPromise = page.waitForEvent('download', {timeout:180000});
-          await button.click();
-          const download = await downloadPromise;
-          await download.saveAs('asset-fetch/downloads/Fantasy_Outfits_Standard.zip');
+          let success = false;
+          let lastError = '';
+
+          for (let attempt=1; attempt<=5 && !success; attempt++) {
+            const context = await browser.newContext({acceptDownloads:true});
+            const page = await context.newPage();
+            page.setDefaultTimeout(35000);
+            try {
+              console.log(`attempt ${attempt}: opening ${purchase}`);
+              const resp = await page.goto(purchase, {waitUntil:'domcontentloaded', timeout:60000});
+              console.log('status', resp?.status(), 'url', page.url(), 'title', await page.title());
+              await page.waitForTimeout(1500 + attempt*1000);
+              fs.writeFileSync(`asset-fetch/diagnostics/purchase-${attempt}.html`, await page.content());
+              await page.screenshot({path:`asset-fetch/diagnostics/purchase-${attempt}.png`, fullPage:true});
+
+              let free = page.locator('a.direct_download_btn').first();
+              if (await free.count() === 0) free = page.getByText('No thanks, just take me to the downloads', {exact:false}).first();
+              if (await free.count() === 0) {
+                const body = (await page.locator('body').innerText().catch(()=>'' )).slice(0,1500);
+                console.log('free control missing; body preview:', body);
+                throw new Error('free-download control missing');
+              }
+
+              await free.click();
+              await page.waitForTimeout(3000);
+              console.log('download page', page.url(), 'title', await page.title());
+              fs.writeFileSync(`asset-fetch/diagnostics/downloads-${attempt}.html`, await page.content());
+              await page.screenshot({path:`asset-fetch/diagnostics/downloads-${attempt}.png`, fullPage:true});
+
+              let row = page.locator('.upload').filter({hasText:targetName}).first();
+              if (await row.count() === 0) row = page.locator('.upload').filter({hasText:'Standard'}).first();
+              if (await row.count() === 0) throw new Error('Standard outfit ZIP row missing');
+              console.log('row:', (await row.innerText()).slice(0,500));
+
+              let button = row.locator('a.download_btn').first();
+              if (await button.count() === 0) button = row.getByText('Download', {exact:true}).first();
+              if (await button.count() === 0) throw new Error('download button missing');
+
+              const downloadPromise = page.waitForEvent('download', {timeout:180000});
+              await button.click();
+              const download = await downloadPromise;
+              console.log('suggested filename', download.suggestedFilename());
+              await download.saveAs('asset-fetch/downloads/Fantasy_Outfits_Standard.zip');
+              success = true;
+            } catch (e) {
+              lastError = String(e?.stack || e);
+              console.log('attempt failed:', lastError);
+              await new Promise(r=>setTimeout(r, attempt*2500));
+            } finally {
+              await context.close();
+            }
+          }
+
           await browser.close();
+          if (!success) throw new Error(`all itch download attempts failed: ${lastError}`);
           JS
           node ./fetch-quaternius.mjs
 
-      - name: Extract and select Godot/glTF donor files
+      - name: Extract and select glTF donor files
         shell: bash
         run: |
           set -euo pipefail
@@ -65,8 +99,6 @@ jobs:
           unzip -q asset-fetch/downloads/Fantasy_Outfits_Standard.zip -d asset-fetch/extracted
           unzip -l asset-fetch/downloads/Fantasy_Outfits_Standard.zip > asset-fetch/ZIP_INVENTORY.txt
           find asset-fetch/extracted -type f -printf '%p\n' | sort > asset-fetch/EXTRACTED_FILES.txt
-          echo '--- likely GLTF/Godot files ---'
-          grep -Ei '(gltf|godot|license|texture)' asset-fetch/EXTRACTED_FILES.txt | head -500 || true
 
           python3 - <<'PY'
           from pathlib import Path
@@ -81,9 +113,8 @@ jobs:
               suffix=p.suffix.lower()
               keep=False
               if 'license' in p.name.lower() and suffix in {'.txt','.md'}: keep=True
-              if suffix in {'.gltf','.bin','.png','.jpg','.jpeg'} and ('godot' in low or 'gltf' in low): keep=True
-              # Shared texture folders are sometimes siblings of the glTF export folders.
-              if suffix in {'.png','.jpg','.jpeg'} and 'texture' in low: keep=True
+              if suffix in {'.gltf','.bin'}: keep=True
+              if suffix in {'.png','.jpg','.jpeg'} and ('texture' in low or 'gltf' in low or 'godot' in low): keep=True
               if keep:
                   out=dst/rel
                   out.parent.mkdir(parents=True,exist_ok=True)
@@ -92,16 +123,17 @@ jobs:
           Path('asset-fetch/SELECTED_FILES.txt').write_text('\n'.join(sorted(chosen)))
           print('selected',len(chosen),'files')
           PY
+
           sha256sum asset-fetch/downloads/Fantasy_Outfits_Standard.zip > asset-fetch/SHA256SUMS.txt
           du -sh asset-fetch/selected
-          # Keep the runner artifact focused on reusable Godot files, not duplicate FBX/Unity exports.
           rm -rf asset-fetch/extracted asset-fetch/downloads
 
       - name: Upload selected outfit donor bundle
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runefoundry-quaternius-official-fantasy-outfits
           path: asset-fetch/
-          if-no-files-found: error
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 7
