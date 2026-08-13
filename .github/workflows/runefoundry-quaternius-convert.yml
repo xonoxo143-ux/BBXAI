@@ -14,32 +14,97 @@ permissions:
 jobs:
   convert:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - name: Fetch attributed CC0 mirror file
+      - name: Recover attributed Quaternius CC0 humanoids
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/fastrouter/experiments-costa-vista.git donor
-          mkdir -p out
-          cp donor/ATTRIBUTION.md out/ATTRIBUTION.md
-          cp donor/public/assets/characters.glb input.glb
-          git -C donor rev-parse HEAD > out/MIRROR_COMMIT.txt
+          mkdir -p raw out/meta
 
-      - name: Remove mesh quantization/compression for Godot import
+          # Pilot mirror: a clean Universal Base Characters body + 43 animations.
+          git clone --depth 1 https://github.com/fastrouter/experiments-costa-vista.git costa
+          cp costa/public/assets/characters.glb raw/base-pilot.glb
+          cp costa/ATTRIBUTION.md out/meta/COSTA_ATTRIBUTION.md
+          git -C costa rev-parse HEAD > out/meta/COSTA_COMMIT.txt
+
+          # Second public project with explicitly bundled Quaternius CC0 licenses.
+          # Clone history so deleted donor variants can also be recovered if the project
+          # previously carried them.
+          git clone https://github.com/Seyamalam/blood-league-kickoff.git league
+          git -C league rev-parse HEAD > out/meta/BLOOD_LEAGUE_COMMIT.txt
+          cp league/public/assets/vendor/quaternius/LICENSE-BASE-CHARACTERS.txt out/meta/LICENSE-BASE-CHARACTERS.txt
+          cp league/public/assets/vendor/quaternius/LICENSE-ANIMATIONS.txt out/meta/LICENSE-ANIMATIONS.txt
+          [ -f league/docs/art/ASSET_CREDITS.md ] && cp league/docs/art/ASSET_CREDITS.md out/meta/BLOOD_LEAGUE_ASSET_CREDITS.md || true
+          [ -f league/docs/ASSET_SOURCES_AND_LICENSES.md ] && cp league/docs/ASSET_SOURCES_AND_LICENSES.md out/meta/BLOOD_LEAGUE_ASSET_SOURCES.md || true
+
+          recover_path() {
+            local path="$1" name="$2"
+            if [ -f "league/$path" ]; then
+              cp "league/$path" "raw/$name.glb"
+              echo "current:$path" > "out/meta/$name.origin.txt"
+              return 0
+            fi
+            local commit
+            commit=$(git -C league log --all --format='%H' -- "$path" | head -n 1 || true)
+            if [ -n "$commit" ]; then
+              if git -C league show "$commit:$path" > "raw/$name.glb" 2>/dev/null; then
+                echo "$commit:$path" > "out/meta/$name.origin.txt"
+                return 0
+              fi
+            fi
+            return 1
+          }
+
+          recover_path public/assets/vendor/quaternius/night-striker.glb night-striker || true
+          recover_path public/assets/vendor/quaternius/gold.glb gold || true
+          recover_path public/assets/vendor/quaternius/toonman-steve.glb toonman-steve || true
+
+          # Search every historical object for other GLB filenames under the Quaternius path.
+          git -C league rev-list --objects --all \
+            | grep -Ei 'quaternius/.*\.glb$' \
+            | sort -u > out/meta/HISTORICAL_QUATERNIUS_GLBS.txt || true
+          cat out/meta/HISTORICAL_QUATERNIUS_GLBS.txt || true
+
+          echo '--- recovered raw donors ---'
+          find raw -type f -printf '%f %s bytes\n' | sort
+
+      - name: Convert recovered GLBs to conservative Godot-compatible form
         shell: bash
         run: |
           set -euo pipefail
           npm install --no-save @gltf-transform/cli@4
-          npx gltf-transform dequantize input.glb out/characters-godot.glb
-          npx gltf-transform inspect out/characters-godot.glb > out/INSPECT.txt
-          ls -lh input.glb out/characters-godot.glb
-          grep -E 'EXT_meshopt_compression|KHR_mesh_quantization' out/INSPECT.txt || true
+          shopt -s nullglob
+          for src in raw/*.glb; do
+            name=$(basename "$src" .glb)
+            echo "::group::convert $name"
+            # dequantize removes KHR_mesh_quantization; decompress removes meshopt/draco
+            # where present. If a transform is already absent, glTF Transform leaves
+            # the content valid.
+            work="out/${name}-godot.glb"
+            if npx gltf-transform dequantize "$src" "$work"; then
+              :
+            else
+              cp "$src" "$work"
+            fi
+            npx gltf-transform inspect "$work" > "out/${name}-inspect.txt"
+            ls -lh "$src" "$work"
+            echo "::endgroup::"
+          done
 
-      - name: Upload converted pilot
+      - name: Inventory and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          find out -type f -printf '%p %s bytes\n' | sort
+          sha256sum out/*-godot.glb > out/SHA256SUMS.txt || true
+          cat out/SHA256SUMS.txt || true
+
+      - name: Upload converted donor candidates
         uses: actions/upload-artifact@v4
         with:
-          name: runefoundry-quaternius-godot-pilot
+          name: runefoundry-quaternius-godot-candidates
           path: out/
           if-no-files-found: error
+          compression-level: 0
           retention-days: 7
