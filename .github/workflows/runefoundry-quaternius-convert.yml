@@ -1,0 +1,45 @@
+name: RuneFoundry Quaternius Godot Convert
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tmp/runefoundry-asset-runner
+    paths:
+      - .github/workflows/runefoundry-quaternius-convert.yml
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch attributed CC0 mirror file
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/fastrouter/experiments-costa-vista.git donor
+          mkdir -p out
+          cp donor/ATTRIBUTION.md out/ATTRIBUTION.md
+          cp donor/public/assets/characters.glb input.glb
+          git -C donor rev-parse HEAD > out/MIRROR_COMMIT.txt
+
+      - name: Remove mesh quantization/compression for Godot import
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save @gltf-transform/cli@4
+          npx gltf-transform dequantize input.glb out/characters-godot.glb
+          npx gltf-transform inspect out/characters-godot.glb > out/INSPECT.txt
+          ls -lh input.glb out/characters-godot.glb
+          grep -E 'EXT_meshopt_compression|KHR_mesh_quantization' out/INSPECT.txt || true
+
+      - name: Upload converted pilot
+        uses: actions/upload-artifact@v4
+        with:
+          name: runefoundry-quaternius-godot-pilot
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
