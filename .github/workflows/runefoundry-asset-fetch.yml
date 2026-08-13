@@ -14,9 +14,9 @@ permissions:
 jobs:
   fetch-assets:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Fetch official free Universal Base Characters pack
+      - name: Fetch official free Modular Character Outfits Fantasy pack
         shell: bash
         run: |
           set -euo pipefail
@@ -27,73 +27,80 @@ jobs:
           cat > fetch-quaternius.mjs <<'JS'
           import { chromium } from 'playwright';
           import fs from 'fs';
-
           const executable = fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined;
           const browser = await chromium.launch({headless:true, executablePath:executable, args:['--no-sandbox']});
           const context = await browser.newContext({acceptDownloads:true});
           const page = await context.newPage();
           page.setDefaultTimeout(30000);
-
-          const purchase = 'https://quaternius.itch.io/universal-base-characters/purchase';
-          console.log('opening', purchase);
+          const purchase = 'https://quaternius.itch.io/modular-character-outfits-fantasy/purchase';
+          const targetName = 'Modular Character Outfits - Fantasy[Standard].zip';
           await page.goto(purchase, {waitUntil:'domcontentloaded', timeout:60000});
           fs.writeFileSync('asset-fetch/diagnostics/purchase.html', await page.content());
-          await page.screenshot({path:'asset-fetch/diagnostics/purchase.png', fullPage:true});
-
           const free = page.getByText('No thanks, just take me to the downloads', {exact:false}).first();
           if (await free.count() === 0) throw new Error('itch free-download link not found');
-          console.log('clicking free download route');
           await free.click();
           await page.waitForTimeout(3000);
-          console.log('download page', page.url());
           fs.writeFileSync('asset-fetch/diagnostics/downloads.html', await page.content());
           await page.screenshot({path:'asset-fetch/diagnostics/downloads.png', fullPage:true});
-
-          const targetName = 'Universal Base Characters[Standard].zip';
           let row = page.locator('.upload').filter({hasText:targetName}).first();
           if (await row.count() === 0) row = page.locator('div').filter({hasText:targetName}).first();
-          if (await row.count() === 0) throw new Error('Standard ZIP row not found');
-          console.log('row text:', (await row.innerText()).slice(0,500));
-
+          if (await row.count() === 0) throw new Error('Standard outfit ZIP row not found');
           let button = row.getByRole('button', {name:/download/i}).first();
           if (await button.count() === 0) button = row.getByRole('link', {name:/download/i}).first();
           if (await button.count() === 0) button = row.locator('a,button').filter({hasText:/download/i}).first();
-          if (await button.count() === 0) throw new Error('Download control not found for Standard ZIP');
-
-          console.log('starting Standard ZIP download');
-          const downloadPromise = page.waitForEvent('download', {timeout:120000});
+          const downloadPromise = page.waitForEvent('download', {timeout:180000});
           await button.click();
           const download = await downloadPromise;
-          console.log('suggested filename', download.suggestedFilename());
-          await download.saveAs('asset-fetch/downloads/Universal_Base_Characters_Standard.zip');
+          await download.saveAs('asset-fetch/downloads/Fantasy_Outfits_Standard.zip');
           await browser.close();
           JS
-
           node ./fetch-quaternius.mjs
 
-      - name: Verify and inventory official pack
+      - name: Extract and select Godot/glTF donor files
         shell: bash
         run: |
           set -euo pipefail
-          unzip -t asset-fetch/downloads/Universal_Base_Characters_Standard.zip >/dev/null
-          unzip -l asset-fetch/downloads/Universal_Base_Characters_Standard.zip > asset-fetch/ZIP_INVENTORY.txt
-          ls -lh asset-fetch/downloads/Universal_Base_Characters_Standard.zip
-          grep -Ei '\.(glb|gltf|fbx|blend|png|jpg|jpeg)$' asset-fetch/ZIP_INVENTORY.txt | head -250 || true
-          sha256sum asset-fetch/downloads/Universal_Base_Characters_Standard.zip > asset-fetch/SHA256SUMS.txt
+          unzip -t asset-fetch/downloads/Fantasy_Outfits_Standard.zip >/dev/null
+          mkdir -p asset-fetch/extracted asset-fetch/selected
+          unzip -q asset-fetch/downloads/Fantasy_Outfits_Standard.zip -d asset-fetch/extracted
+          unzip -l asset-fetch/downloads/Fantasy_Outfits_Standard.zip > asset-fetch/ZIP_INVENTORY.txt
+          find asset-fetch/extracted -type f -printf '%p\n' | sort > asset-fetch/EXTRACTED_FILES.txt
+          echo '--- likely GLTF/Godot files ---'
+          grep -Ei '(gltf|godot|license|texture)' asset-fetch/EXTRACTED_FILES.txt | head -500 || true
 
-      - name: Extract Godot-friendly body candidates
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p asset-fetch/extracted
-          unzip -q asset-fetch/downloads/Universal_Base_Characters_Standard.zip -d asset-fetch/extracted
-          find asset-fetch/extracted -type f -printf '%p\n' | grep -Ei '\.(glb|gltf|fbx|png|jpg|jpeg|txt)$' | sort > asset-fetch/EXTRACTED_FILES.txt
-          cat asset-fetch/EXTRACTED_FILES.txt | head -300
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          src=Path('asset-fetch/extracted')
+          dst=Path('asset-fetch/selected')
+          chosen=[]
+          for p in src.rglob('*'):
+              if not p.is_file(): continue
+              rel=p.relative_to(src)
+              low=str(rel).lower()
+              suffix=p.suffix.lower()
+              keep=False
+              if 'license' in p.name.lower() and suffix in {'.txt','.md'}: keep=True
+              if suffix in {'.gltf','.bin','.png','.jpg','.jpeg'} and ('godot' in low or 'gltf' in low): keep=True
+              # Shared texture folders are sometimes siblings of the glTF export folders.
+              if suffix in {'.png','.jpg','.jpeg'} and 'texture' in low: keep=True
+              if keep:
+                  out=dst/rel
+                  out.parent.mkdir(parents=True,exist_ok=True)
+                  shutil.copy2(p,out)
+                  chosen.append(str(rel))
+          Path('asset-fetch/SELECTED_FILES.txt').write_text('\n'.join(sorted(chosen)))
+          print('selected',len(chosen),'files')
+          PY
+          sha256sum asset-fetch/downloads/Fantasy_Outfits_Standard.zip > asset-fetch/SHA256SUMS.txt
+          du -sh asset-fetch/selected
+          # Keep the runner artifact focused on reusable Godot files, not duplicate FBX/Unity exports.
+          rm -rf asset-fetch/extracted asset-fetch/downloads
 
-      - name: Upload official pack and diagnostics
+      - name: Upload selected outfit donor bundle
         uses: actions/upload-artifact@v4
         with:
-          name: runefoundry-quaternius-official-base-characters
+          name: runefoundry-quaternius-official-fantasy-outfits
           path: asset-fetch/
           if-no-files-found: error
           compression-level: 0
