@@ -1,0 +1,173 @@
+name: RuneFoundry Asset Fetch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - tmp/runefoundry-asset-runner
+    paths:
+      - .github/workflows/runefoundry-asset-fetch.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Quaternius CC0 packs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p asset-fetch
+          python3 - <<'PY'
+          import json, os, re, sys, time
+          from html.parser import HTMLParser
+          from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
+          from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+          pages = {
+              "universal_base_characters": "https://quaternius.com/packs/universalbasecharacters.html",
+              "fantasy_modular_outfits": "https://quaternius.com/packs/modularcharacteroutfitsfantasy.html",
+              "universal_animation_library_1": "https://quaternius.com/packs/universalanimationlibrary.html",
+              "universal_animation_library_2": "https://quaternius.com/packs/universalanimationlibrary2.html",
+          }
+          outdir = "asset-fetch"
+          ua = "Mozilla/5.0 (RuneFoundry asset audit; GitHub Actions)"
+          opener = build_opener(HTTPRedirectHandler())
+
+          class LinkParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.links=[]
+                  self._href=None
+                  self._txt=[]
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower()=="a":
+                      self._href=dict(attrs).get("href")
+                      self._txt=[]
+              def handle_data(self, data):
+                  if self._href is not None:
+                      self._txt.append(data)
+              def handle_endtag(self, tag):
+                  if tag.lower()=="a" and self._href is not None:
+                      self.links.append((self._href, " ".join(self._txt).strip()))
+                      self._href=None
+                      self._txt=[]
+
+          def fetch(url, limit=400_000_000):
+              req=Request(url, headers={"User-Agent":ua, "Accept":"*/*"})
+              with opener.open(req, timeout=60) as r:
+                  data=r.read(limit+1)
+                  if len(data)>limit:
+                      raise RuntimeError(f"response over {limit} bytes")
+                  return data, r.geturl(), dict(r.headers)
+
+          def google_direct(url):
+              # Common Drive share formats.
+              m=re.search(r"/file/d/([^/]+)", url)
+              if not m:
+                  q=parse_qs(urlparse(url).query)
+                  gid=(q.get("id") or [None])[0]
+              else:
+                  gid=m.group(1)
+              if gid:
+                  return f"https://drive.usercontent.google.com/download?id={gid}&export=download&confirm=t"
+              return url
+
+          def normalize_candidate(url):
+              if "drive.google.com" in url:
+                  return google_direct(url)
+              if "dropbox.com" in url:
+                  p=urlparse(url); q=parse_qs(p.query); q["dl"]=["1"]
+                  return urlunparse((p.scheme,p.netloc,p.path,p.params,urlencode({k:v[-1] for k,v in q.items()}),p.fragment))
+              return url
+
+          def kind(data, headers, final_url):
+              if data[:4]==b"PK\x03\x04": return "zip"
+              if data[:2]==b"\x1f\x8b": return "gzip"
+              if data[:4]==b"glTF": return "glb"
+              c=(headers.get("Content-Type") or "").lower()
+              if "zip" in c: return "zip"
+              if "octet-stream" in c and len(data)>100_000: return "binary"
+              return "html_or_other"
+
+          manifest={"source":"Quaternius", "license":"CC0 per official pack pages", "packs":{}}
+          downloaded=set()
+
+          for key,page in pages.items():
+              print(f"::group::{key}")
+              html, final, hdr=fetch(page, 5_000_000)
+              text=html.decode("utf-8", "replace")
+              open(os.path.join(outdir,key+".html"),"w",encoding="utf-8").write(text)
+              p=LinkParser(); p.feed(text)
+              candidates=[]
+              for href,label in p.links:
+                  absolute=urljoin(final,href)
+                  score=0
+                  low=(label+" "+absolute).lower()
+                  if "download" in label.lower(): score+=100
+                  if any(x in low for x in ("drive.google", "dropbox", ".zip", "download")): score+=40
+                  if "itch.io" in low: score-=20
+                  if "patreon" in low or "member" in low: score-=80
+                  if score>0:
+                      candidates.append({"label":label,"url":absolute,"score":score})
+              candidates.sort(key=lambda x:x["score"], reverse=True)
+              print("Candidates:")
+              for c in candidates[:20]: print(c)
+
+              record={"page":page,"candidates":candidates,"download":None}
+              for c in candidates:
+                  raw=c["url"]
+                  if raw in downloaded: continue
+                  if "itch.io" in raw or "patreon" in raw: continue
+                  test=normalize_candidate(raw)
+                  try:
+                      data, resolved, headers=fetch(test)
+                  except Exception as e:
+                      print("candidate failed",raw,repr(e)); continue
+                  k=kind(data,headers,resolved)
+                  print("candidate result",k,len(data),resolved,headers.get("Content-Type"))
+                  if k in ("zip","gzip","glb","binary") and len(data)>100_000:
+                      ext={"zip":"zip","gzip":"gz","glb":"glb","binary":"bin"}[k]
+                      fn=f"{key}.{ext}"
+                      open(os.path.join(outdir,fn),"wb").write(data)
+                      record["download"]={"file":fn,"bytes":len(data),"resolved_url":resolved,"source_url":raw,"kind":k}
+                      downloaded.add(raw)
+                      print(f"Downloaded {fn}: {len(data):,} bytes")
+                      break
+                  else:
+                      # Preserve small landing response for diagnosis.
+                      if len(data)<5_000_000:
+                          safe=re.sub(r"[^A-Za-z0-9_.-]+","_",key+"_candidate")+".html"
+                          open(os.path.join(outdir,safe),"wb").write(data)
+              manifest["packs"][key]=record
+              print("::endgroup::")
+
+          with open(os.path.join(outdir,"manifest.json"),"w",encoding="utf-8") as f:
+              json.dump(manifest,f,indent=2)
+          print(json.dumps(manifest,indent=2))
+
+          missing=[k for k,v in manifest["packs"].items() if not v["download"]]
+          if missing:
+              print("WARNING: automatic direct download was not resolved for:", ", ".join(missing))
+              # Keep workflow successful so diagnostics are uploaded as an artifact.
+          PY
+
+      - name: Inventory fetched files
+        run: |
+          find asset-fetch -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+          echo '--- manifest ---'
+          cat asset-fetch/manifest.json
+
+      - name: Upload fetched asset bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: runefoundry-quaternius-assets
+          path: asset-fetch/
+          if-no-files-found: error
+          retention-days: 7
