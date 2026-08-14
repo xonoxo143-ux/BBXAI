@@ -105,7 +105,6 @@ jobs:
           gltfs=list(src.rglob('*.gltf'))
           chosen=[]
           for g in gltfs:
-              # Quaternius Standard packs generally keep buffers/textures beside the glTF exports.
               for p in g.parent.rglob('*'):
                   if p.is_file() and p.suffix.lower() in {'.gltf','.bin','.png','.jpg','.jpeg','.webp'}:
                       rel=p.relative_to(src); out=dst/rel; out.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,out); chosen.append(str(rel))
@@ -118,6 +117,7 @@ jobs:
           find donor-fetch/selected -type f -printf '%p %s bytes\n' | sort > donor-fetch/SELECTED_FILES.txt
           sha256sum "$zip" > donor-fetch/SHA256SUMS.txt
           du -sh donor-fetch/selected
+          chmod -R u+w donor-fetch/extracted donor-fetch/downloads || true
           rm -rf donor-fetch/extracted donor-fetch/downloads
 
       - name: Upload donor subset
