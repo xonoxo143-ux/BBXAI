@@ -12,150 +12,118 @@ permissions:
   contents: read
 
 jobs:
-  fetch-world-donors:
+  fetch-world-donor:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: medieval-village
+            purchase: https://quaternius.itch.io/medieval-village-megakit/purchase
+            needle: Medieval Village MegaKit[Standard].zip
+            output: Medieval_Village_MegaKit_Standard.zip
+          - key: fantasy-props
+            purchase: https://quaternius.itch.io/fantasy-props-megakit/purchase
+            needle: Fantasy Props MegaKit[Standard].zip
+            output: Fantasy_Props_MegaKit_Standard.zip
+          - key: stylized-nature
+            purchase: https://quaternius.itch.io/stylized-nature-megakit/purchase
+            needle: Stylized Nature MegaKit[Standard].zip
+            output: Stylized_Nature_MegaKit_Standard.zip
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 35
     steps:
-      - name: Fetch official Quaternius Standard packs
+      - name: Fetch official Quaternius Standard pack
         shell: bash
+        env:
+          PACK_KEY: ${{ matrix.key }}
+          PURCHASE_URL: ${{ matrix.purchase }}
+          TARGET_NAME: ${{ matrix.needle }}
+          OUTPUT_NAME: ${{ matrix.output }}
         run: |
           set -euo pipefail
           mkdir -p donor-fetch/downloads donor-fetch/diagnostics
           npm init -y >/dev/null 2>&1
           npm install --no-save playwright@1.54.2 >/dev/null
 
-          cat > fetch-donors.mjs <<'JS'
+          cat > fetch-donor.mjs <<'JS'
           import { chromium } from 'playwright';
           import fs from 'fs';
-
-          const packs = [
-            {
-              key:'medieval_village',
-              purchase:'https://quaternius.itch.io/medieval-village-megakit/purchase',
-              needle:'Medieval Village MegaKit[Standard].zip',
-              output:'Medieval_Village_MegaKit_Standard.zip'
-            },
-            {
-              key:'fantasy_props',
-              purchase:'https://quaternius.itch.io/fantasy-props-megakit/purchase',
-              needle:'Fantasy Props MegaKit[Standard].zip',
-              output:'Fantasy_Props_MegaKit_Standard.zip'
-            },
-            {
-              key:'stylized_nature',
-              purchase:'https://quaternius.itch.io/stylized-nature-megakit/purchase',
-              needle:'Stylized Nature MegaKit[Standard].zip',
-              output:'Stylized_Nature_MegaKit_Standard.zip'
-            }
-          ];
-
-          const executable = fs.existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined;
-          const browser = await chromium.launch({headless:true, executablePath:executable, args:['--no-sandbox']});
-
-          for (const pack of packs) {
-            let success = false;
-            for (let attempt=1; attempt<=4 && !success; attempt++) {
-              const context = await browser.newContext({acceptDownloads:true});
-              const page = await context.newPage();
-              page.setDefaultTimeout(35000);
-              try {
-                console.log(`PACK ${pack.key} attempt ${attempt}`);
-                await page.goto(pack.purchase, {waitUntil:'domcontentloaded', timeout:60000});
-                await page.waitForTimeout(1200 + attempt*500);
-                fs.writeFileSync(`donor-fetch/diagnostics/${pack.key}-purchase-${attempt}.html`, await page.content());
-
-                let free = page.locator('.direct_download_btn').first();
-                if (await free.count() === 0) free = page.getByText('No thanks, just take me to the downloads', {exact:false}).first();
-                if (await free.count() === 0) throw new Error('free download route missing');
-                await free.click();
-                await page.waitForTimeout(2500);
-                fs.writeFileSync(`donor-fetch/diagnostics/${pack.key}-downloads-${attempt}.html`, await page.content());
-
-                let row = page.locator('.upload').filter({hasText:pack.needle}).first();
-                if (await row.count() === 0) row = page.locator('div').filter({hasText:pack.needle}).first();
-                if (await row.count() === 0) throw new Error(`Standard row missing: ${pack.needle}`);
-
-                let button = row.getByRole('button', {name:/download/i}).first();
-                if (await button.count() === 0) button = row.getByRole('link', {name:/download/i}).first();
-                if (await button.count() === 0) button = row.locator('a,button').filter({hasText:/download/i}).first();
-                if (await button.count() === 0) throw new Error('download control missing');
-
-                const promise = page.waitForEvent('download', {timeout:180000});
-                await button.click();
-                const download = await promise;
-                await download.saveAs(`donor-fetch/downloads/${pack.output}`);
-                console.log(`Downloaded ${pack.output}`);
-                success = true;
-              } catch (e) {
-                console.error(`attempt ${attempt} failed`, e);
-              } finally {
-                await context.close();
-              }
-            }
-            if (!success) throw new Error(`Failed to download ${pack.key}`);
+          const key=process.env.PACK_KEY;
+          const purchase=process.env.PURCHASE_URL;
+          const target=process.env.TARGET_NAME;
+          const output=process.env.OUTPUT_NAME;
+          const executable=fs.existsSync('/usr/bin/google-chrome')?'/usr/bin/google-chrome':undefined;
+          let completed=false;
+          for(let attempt=1;attempt<=5 && !completed;attempt++){
+            const browser=await chromium.launch({headless:true,executablePath:executable,args:['--no-sandbox']});
+            const context=await browser.newContext({acceptDownloads:true});
+            const page=await context.newPage();
+            page.setDefaultTimeout(40000);
+            try{
+              await page.goto(purchase,{waitUntil:'domcontentloaded',timeout:60000});
+              await page.waitForTimeout(1000+attempt*800);
+              fs.writeFileSync(`donor-fetch/diagnostics/${key}-purchase-${attempt}.html`,await page.content());
+              let free=page.locator('.direct_download_btn').first();
+              if(await free.count()===0) free=page.getByText('No thanks, just take me to the downloads',{exact:false}).first();
+              if(await free.count()===0) throw new Error('free route missing');
+              await free.click();
+              await page.waitForTimeout(2500);
+              fs.writeFileSync(`donor-fetch/diagnostics/${key}-downloads-${attempt}.html`,await page.content());
+              let row=page.locator('.upload').filter({hasText:target}).first();
+              if(await row.count()===0) row=page.locator('div').filter({hasText:target}).first();
+              if(await row.count()===0) throw new Error(`target row missing: ${target}`);
+              let button=row.getByRole('button',{name:/download/i}).first();
+              if(await button.count()===0) button=row.getByRole('link',{name:/download/i}).first();
+              if(await button.count()===0) button=row.locator('a,button').filter({hasText:/download/i}).first();
+              if(await button.count()===0) throw new Error('download control missing');
+              const promise=page.waitForEvent('download',{timeout:180000});
+              await button.click();
+              const download=await promise;
+              await download.saveAs(`donor-fetch/downloads/${output}`);
+              completed=true;
+            }catch(e){console.error(`attempt ${attempt}`,e)}
+            await browser.close();
           }
-          await browser.close();
+          if(!completed) throw new Error(`failed ${key}`);
           JS
-          node ./fetch-donors.mjs
+          node ./fetch-donor.mjs
 
-      - name: Extract glTF donor subsets
+      - name: Extract glTF subset
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p donor-fetch/selected
-          for zip in donor-fetch/downloads/*.zip; do
-            base=$(basename "$zip" .zip)
-            mkdir -p "donor-fetch/extracted/$base" "donor-fetch/selected/$base"
-            unzip -t "$zip" >/dev/null
-            unzip -q "$zip" -d "donor-fetch/extracted/$base"
-          done
+          zip=$(find donor-fetch/downloads -name '*.zip' -print -quit)
+          unzip -t "$zip" >/dev/null
+          mkdir -p donor-fetch/extracted donor-fetch/selected
+          unzip -q "$zip" -d donor-fetch/extracted
+          unzip -l "$zip" > donor-fetch/ZIP_INVENTORY.txt
 
           python3 - <<'PY'
           from pathlib import Path
           import shutil, json
-
-          root=Path('donor-fetch/extracted')
-          out=Path('donor-fetch/selected')
-          manifest={}
-          for pack in root.iterdir():
-              if not pack.is_dir(): continue
-              chosen=[]
-              gltf_dirs=set()
-              for p in pack.rglob('*.gltf'):
-                  gltf_dirs.add(p.parent)
-              # Prefer glTF export trees and their adjacent textures/buffers.
-              for d in sorted(gltf_dirs):
-                  for p in d.rglob('*'):
-                      if p.is_file() and p.suffix.lower() in {'.gltf','.bin','.png','.jpg','.jpeg','.webp'}:
-                          rel=p.relative_to(pack)
-                          dst=out/pack.name/rel
-                          dst.parent.mkdir(parents=True,exist_ok=True)
-                          shutil.copy2(p,dst)
-                          chosen.append(str(rel))
-              # Preserve license/readme files from the pack root tree.
-              for p in pack.rglob('*'):
-                  if not p.is_file(): continue
-                  low=p.name.lower()
-                  if ('license' in low or 'readme' in low) and p.suffix.lower() in {'.txt','.md'}:
-                      rel=p.relative_to(pack)
-                      dst=out/pack.name/rel
-                      dst.parent.mkdir(parents=True,exist_ok=True)
-                      shutil.copy2(p,dst)
-                      chosen.append(str(rel))
-              manifest[pack.name]=sorted(set(chosen))
-          Path('donor-fetch/DONOR_MANIFEST.json').write_text(json.dumps(manifest,indent=2))
-          for k,v in manifest.items(): print(k, len(v), 'files')
+          src=Path('donor-fetch/extracted'); dst=Path('donor-fetch/selected')
+          gltfs=list(src.rglob('*.gltf'))
+          chosen=[]
+          for g in gltfs:
+              # Quaternius Standard packs generally keep buffers/textures beside the glTF exports.
+              for p in g.parent.rglob('*'):
+                  if p.is_file() and p.suffix.lower() in {'.gltf','.bin','.png','.jpg','.jpeg','.webp'}:
+                      rel=p.relative_to(src); out=dst/rel; out.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,out); chosen.append(str(rel))
+          for p in src.rglob('*'):
+              if p.is_file() and ('license' in p.name.lower() or 'readme' in p.name.lower()) and p.suffix.lower() in {'.txt','.md'}:
+                  rel=p.relative_to(src); out=dst/rel; out.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,out); chosen.append(str(rel))
+          Path('donor-fetch/DONOR_MANIFEST.json').write_text(json.dumps({'files':sorted(set(chosen))},indent=2))
+          print('gltf files',len(gltfs),'selected files',len(set(chosen)))
           PY
-
           find donor-fetch/selected -type f -printf '%p %s bytes\n' | sort > donor-fetch/SELECTED_FILES.txt
-          sha256sum donor-fetch/downloads/*.zip > donor-fetch/SHA256SUMS.txt
-          du -sh donor-fetch/selected/* || true
+          sha256sum "$zip" > donor-fetch/SHA256SUMS.txt
+          du -sh donor-fetch/selected
           rm -rf donor-fetch/extracted donor-fetch/downloads
 
-      - name: Upload RuneFoundry world donor bundle
+      - name: Upload donor subset
         uses: actions/upload-artifact@v4
         with:
-          name: runefoundry-world-donors
+          name: runefoundry-${{ matrix.key }}-donor
           path: donor-fetch/
           if-no-files-found: error
           compression-level: 0
