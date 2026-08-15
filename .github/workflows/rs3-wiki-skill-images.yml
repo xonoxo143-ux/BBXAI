@@ -44,7 +44,7 @@ jobs:
 
       - name: Collect paired RuneScape Wiki assets
         run: |
-          python tools/rs3_wiki_scraper/rs3_wiki_pairs.py \
+          python tools/rs3_wiki_scraper/rs3_wiki_pairs_v2.py \
             --profile "$PROFILE" \
             --out rs3_wiki_pairs
 
@@ -57,11 +57,10 @@ jobs:
             cat rs3_wiki_pairs/_run_info.json >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
-
           if [[ -f rs3_wiki_pairs/_pairs.csv ]]; then
             echo "### Matched pairs" >> "$GITHUB_STEP_SUMMARY"
             echo '```text' >> "$GITHUB_STEP_SUMMARY"
-            head -n 80 rs3_wiki_pairs/_pairs.csv >> "$GITHUB_STEP_SUMMARY"
+            head -n 100 rs3_wiki_pairs/_pairs.csv >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
