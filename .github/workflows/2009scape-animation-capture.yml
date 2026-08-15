@@ -19,53 +19,38 @@ jobs:
     steps:
       - name: Checkout BBXAI
         uses: actions/checkout@v4
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
       - name: Install minimal X11 tools
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xdotool
-
       - name: Fetch 2009Scape singleplayer
         run: |
           git clone --depth 1 https://github.com/2009scape/Singleplayer-Edition-Linux.git 2009scape-sp
-          du -sh 2009scape-sp
-
       - name: Prepare cache and display
         run: |
           mkdir -p "$HOME/.runite_rs/runescape" capture
           cp -f 2009scape-sp/data/cache/* "$HOME/.runite_rs/runescape/"
           Xvfb :99 -screen 0 1280x900x24 -ac +extension GLX +render -noreset >capture/xvfb.log 2>&1 &
-          echo $! > capture/xvfb.pid
           sleep 2
-
       - name: Initialize bundled database cleanly
         working-directory: 2009scape-sp
         run: |
-          set -u
           export LD_LIBRARY_PATH="$PWD/database/lib"
-          rm -rf database/data
-          mkdir -p database/data
+          rm -rf database/data && mkdir -p database/data
           cd database
-          bin/mysqld --no-defaults --console --skip-grant-tables --lc-messages-dir="./share/" --datadir="./data" >../../capture/init-mysql.log 2>&1 &
-          DBPID=$!
-          echo "$DBPID" > ../../capture/init-mysql.pid
+          bin/mysqld --no-defaults --console --skip-grant-tables --lc-messages-dir="./share/" --datadir="./data" >../../capture/init-mysql.log 2>&1 & DBPID=$!
           cd ..
-          for i in $(seq 1 30); do
-            if database/bin/mysql --no-defaults -u root -e 'SELECT 1' >/dev/null 2>&1; then break; fi
-            sleep 1
-          done
+          for i in $(seq 1 30); do database/bin/mysql --no-defaults -u root -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
           database/bin/mysql --no-defaults -u root -e 'CREATE DATABASE IF NOT EXISTS global;' >../capture/init.log 2>&1 || true
           database/bin/mysql --no-defaults -u root global < data/global.sql >>../capture/init.log 2>&1 || true
           kill "$DBPID" 2>/dev/null || true
           sleep 3
-
-      - name: Start 2009Scape services and capture boot
+      - name: Boot and probe login form
         working-directory: 2009scape-sp
         env:
           DISPLAY: :99
@@ -74,33 +59,27 @@ jobs:
           export LD_LIBRARY_PATH="$PWD/database/lib"
           cd database
           bin/mysqld --no-defaults --console --skip-grant-tables --lc-messages-dir="./share/" --datadir="./data" >../../capture/mysql.log 2>&1 &
-          echo $! > ../../capture/mysql.pid
           cd ..
-          for i in $(seq 1 30); do
-            if database/bin/mysql --no-defaults -u root -e 'SELECT 1' >/dev/null 2>&1; then break; fi
-            sleep 1
-          done
-          java -version >../capture/java.txt 2>&1
-          java -jar ms.jar >../capture/ms.log 2>&1 & echo $! > ../capture/ms.pid
+          for i in $(seq 1 30); do database/bin/mysql --no-defaults -u root -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+          java -jar ms.jar >../capture/ms.log 2>&1 &
           sleep 3
-          java -jar server.jar >../capture/server.log 2>&1 & echo $! > ../capture/server.pid
+          java -jar server.jar >../capture/server.log 2>&1 &
           sleep 20
-          java -jar client.jar >../capture/client.log 2>&1 & echo $! > ../capture/client.pid
+          java -jar client.jar >../capture/client.log 2>&1 &
           sleep 25
-          xdotool search --onlyvisible --name 'RuneScape|2009|Client' getwindowname %@ >../capture/windows.txt 2>&1 || true
-          if command -v import >/dev/null; then import -display :99 -window root ../capture/desktop.png || true; fi
-          if command -v ffmpeg >/dev/null; then ffmpeg -y -f x11grab -video_size 1280x900 -i :99 -frames:v 1 ../capture/desktop_ffmpeg.png >/dev/null 2>&1 || true; fi
-          ps aux > ../capture/processes.txt
+          import -display :99 -window root ../capture/00_main_menu.png || true
+          # Client content is centered at roughly x=258..1023, y=198..702 on the 1280x900 Xvfb desktop.
+          # Click the visible "Log In" line on the parchment menu.
+          xdotool mousemove 640 383 click 1
+          sleep 3
+          import -display :99 -window root ../capture/01_login_form.png || true
+          xdotool getmouselocation >../capture/mouse.txt 2>&1 || true
+          ps aux >../capture/processes.txt
           exit 0
-
       - name: Summarize logs
         if: always()
         run: |
-          for f in capture/init.log capture/init-mysql.log capture/mysql.log capture/ms.log capture/server.log capture/client.log capture/windows.txt capture/java.txt; do
-            echo "===== $f ====="
-            tail -n 120 "$f" 2>/dev/null || true
-          done
-
+          for f in capture/init.log capture/mysql.log capture/ms.log capture/server.log capture/client.log capture/mouse.txt; do echo "===== $f ====="; tail -n 100 "$f" 2>/dev/null || true; done
       - name: Upload capture diagnostics
         if: always()
         uses: actions/upload-artifact@v4
