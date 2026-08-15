@@ -7,6 +7,7 @@ and measures the corpus before a bulk reference download is allowed.
 from __future__ import annotations
 
 import csv
+import html
 import json
 import time
 import urllib.parse
@@ -15,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 
 API = "https://runescape.wiki/api.php"
-UA = "BBXAI-RS3-Reference-Image-Plan/1.0 (personal research/reference)"
+UA = "BBXAI-RS3-Reference-Image-Plan/1.1 (personal research/reference)"
 BATCH = 750
 
 
@@ -49,8 +50,48 @@ def as_list(v):
 
 
 def clean_image(s):
-    s=str(s or '').strip()
-    return s[5:] if s.lower().startswith('file:') else s
+    """Convert Recipe module image syntax to one MediaWiki file title basename."""
+    s=html.unescape(str(s or '')).strip()
+    if s.startswith('[[') and s.endswith(']]'):
+        s=s[2:-2].strip()
+    # Recipe JSON occasionally stores rendering options inline: foo.png|32px.
+    s=s.split('|',1)[0].strip()
+    if s.lower().startswith('file:'):
+        s=s[5:].strip()
+    return s
+
+
+def resolve_imageinfo(titles):
+    """Resolve imageinfo while preserving requested names across normalization/redirects."""
+    info={}
+    for i in range(0,len(titles),50):
+        chunk=titles[i:i+50]
+        requested=['File:'+x for x in chunk]
+        d=api(
+            action='query', prop='imageinfo', redirects='1',
+            titles='|'.join(requested), iiprop='url|mime|size|sha1'
+        )
+        q=d.get('query',{})
+        alias={x:x for x in requested}
+        for n in q.get('normalized',[]) or []:
+            alias[n.get('from')]=n.get('to')
+        for r in q.get('redirects',[]) or []:
+            # A redirect may originate from a normalized title.
+            src=r.get('from'); dst=r.get('to')
+            for k,v in list(alias.items()):
+                if v==src: alias[k]=dst
+            alias[src]=dst
+        pages={p.get('title'):p for p in q.get('pages',[]) if p.get('title')}
+        for image, req in zip(chunk,requested):
+            target=alias.get(req,req)
+            # Follow a second alias hop if normalization and redirect both occurred.
+            target=alias.get(target,target)
+            p=pages.get(target)
+            ii=(p.get('imageinfo') or [None])[0] if p else None
+            if ii: info[image]=ii
+        if (i//50+1)%25==0 or i+50>=len(titles):
+            print(f'  resolved metadata batches through {min(i+50,len(titles))}/{len(titles)}',flush=True)
+    return info
 
 
 def main():
@@ -67,12 +108,14 @@ def main():
         for s in as_list(prod.get('skills')):
             if isinstance(s,dict) and s.get('name'): skills.append(str(s['name']).strip())
         if not skills: skills=[str(x).strip() for x in as_list(row.get('uses_skill')) if x]
-        skills={s for s in skills if s}
+        # Normalize accidental lowercase skill names emitted by a minority of records.
+        skills={s[:1].upper()+s[1:] if s else s for s in skills if s}
         if not skills: continue
         for role,key in [('material','materials'),('output','outputs')]:
             for ent in as_list(prod.get(key)):
                 if not isinstance(ent,dict) or not ent.get('image'): continue
                 image=clean_image(ent['image'])
+                if not image: continue
                 # Explicit historical-state art is not a current canonical target.
                 if '(historical)' in image.casefold(): continue
                 rec=images.setdefault(image,{'skills':set(),'roles':set(),'names':set(),'pages':set()})
@@ -82,17 +125,7 @@ def main():
 
     titles=sorted(images, key=str.casefold)
     print(f'Resolving imageinfo for {len(titles)} canonical recipe sprites...',flush=True)
-    info={}
-    for i in range(0,len(titles),50):
-        chunk=titles[i:i+50]
-        d=api(action='query',prop='imageinfo',titles='|'.join('File:'+x for x in chunk),iiprop='url|mime|size|sha1')
-        for p in d.get('query',{}).get('pages',[]):
-            title=p.get('title','')
-            key=clean_image(title)
-            ii=(p.get('imageinfo') or [None])[0]
-            if ii: info[key]=ii
-        if (i//50+1)%25==0 or i+50>=len(titles):
-            print(f'  resolved {min(i+50,len(titles))}/{len(titles)}',flush=True)
+    info=resolve_imageinfo(titles)
 
     total_bytes=0; resolved=0; missing=[]; mime_counts=defaultdict(int); skill_bytes=defaultdict(int); skill_counts=defaultdict(int)
     manifest=[]
