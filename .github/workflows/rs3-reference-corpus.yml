@@ -1,0 +1,39 @@
+name: RS3 Canonical Reference Corpus
+
+on:
+  push:
+    branches:
+      - rs3-wiki-skill-image-runner
+    paths:
+      - "tools/rs3_reference/reference_recipe_corpus.py"
+      - ".github/workflows/rs3-reference-corpus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    name: Download canonical skilling inventory references
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build corpus
+        run: python tools/rs3_reference/reference_recipe_corpus.py
+      - name: Add summary
+        if: always()
+        run: |
+          if [[ -f rs3_reference_corpus/README.md ]]; then cat rs3_reference_corpus/README.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload corpus
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rs3-canonical-skilling-reference-corpus
+          path: rs3_reference_corpus/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
