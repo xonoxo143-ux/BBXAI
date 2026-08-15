@@ -49,7 +49,11 @@ jobs:
           database/bin/mysql --no-defaults -u root -e 'CREATE DATABASE IF NOT EXISTS global;' >../capture/init.log 2>&1 || true
           database/bin/mysql --no-defaults -u root global < data/global.sql >>../capture/init.log 2>&1 || true
           kill "$DBPID" 2>/dev/null || true
-          sleep 3
+          sleep 4
+      - name: Package initialized runtime
+        run: |
+          tar --exclude='2009scape-sp/.git' -czf capture/2009scape-runtime.tar.gz 2009scape-sp
+          ls -lh capture/2009scape-runtime.tar.gz
       - name: Boot and probe login form
         working-directory: 2009scape-sp
         env:
@@ -68,8 +72,6 @@ jobs:
           java -jar client.jar >../capture/client.log 2>&1 &
           sleep 25
           import -display :99 -window root ../capture/00_main_menu.png || true
-          # Client content is centered at roughly x=258..1023, y=198..702 on the 1280x900 Xvfb desktop.
-          # Click the visible "Log In" line on the parchment menu.
           xdotool mousemove 640 383 click 1
           sleep 3
           import -display :99 -window root ../capture/01_login_form.png || true
@@ -80,7 +82,7 @@ jobs:
         if: always()
         run: |
           for f in capture/init.log capture/mysql.log capture/ms.log capture/server.log capture/client.log capture/mouse.txt; do echo "===== $f ====="; tail -n 100 "$f" 2>/dev/null || true; done
-      - name: Upload capture diagnostics
+      - name: Upload capture diagnostics and runtime
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -88,3 +90,4 @@ jobs:
           path: capture/
           if-no-files-found: warn
           retention-days: 7
+          compression-level: 0
