@@ -1,0 +1,92 @@
+name: 2009Scape Animation Capture
+
+on:
+  push:
+    branches:
+      - 2009scape-animation-capture
+    paths:
+      - ".github/workflows/2009scape-animation-capture.yml"
+      - "tools/2009scape_capture/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout BBXAI
+        uses: actions/checkout@v4
+
+      - name: Install desktop capture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool imagemagick ffmpeg openjdk-8-jre-headless
+
+      - name: Fetch 2009Scape singleplayer
+        run: |
+          git clone --depth 1 https://github.com/2009scape/Singleplayer-Edition-Linux.git 2009scape-sp
+          du -sh 2009scape-sp
+
+      - name: Prepare cache and display
+        run: |
+          mkdir -p "$HOME/.runite_rs/runescape" capture
+          cp -f 2009scape-sp/data/cache/* "$HOME/.runite_rs/runescape/"
+          Xvfb :99 -screen 0 1280x900x24 -ac +extension GLX +render -noreset >capture/xvfb.log 2>&1 &
+          echo $! > capture/xvfb.pid
+          sleep 2
+
+      - name: Initialize bundled database
+        working-directory: 2009scape-sp
+        env:
+          DISPLAY: :99
+        run: |
+          set +e
+          printf '2\n' | bash ./run-linux.sh >../capture/init.log 2>&1
+          code=$?
+          echo "init exit=$code" | tee -a ../capture/init.log
+          exit 0
+
+      - name: Start 2009Scape services
+        working-directory: 2009scape-sp
+        env:
+          DISPLAY: :99
+        run: |
+          set +e
+          export LD_LIBRARY_PATH="$PWD/database/lib"
+          cd database
+          bin/mysqld --console --skip-grant-tables --lc-messages-dir="./share/" --datadir="./data" >../../capture/mysql.log 2>&1 &
+          echo $! > ../../capture/mysql.pid
+          cd ..
+          sleep 5
+          java -jar ms.jar >../capture/ms.log 2>&1 & echo $! > ../capture/ms.pid
+          sleep 2
+          java -jar server.jar >../capture/server.log 2>&1 & echo $! > ../capture/server.pid
+          sleep 20
+          java -jar client.jar >../capture/client.log 2>&1 & echo $! > ../capture/client.pid
+          sleep 20
+          xdotool search --onlyvisible --name 'RuneScape|2009|Client' getwindowname %@ >../capture/windows.txt 2>&1 || true
+          import -display :99 -window root ../capture/desktop.png || true
+          xwd -display :99 -root -silent -out ../capture/desktop.xwd || true
+          ps aux > ../capture/processes.txt
+          sleep 2
+          exit 0
+
+      - name: Summarize logs
+        if: always()
+        run: |
+          for f in capture/init.log capture/mysql.log capture/ms.log capture/server.log capture/client.log capture/windows.txt; do
+            echo "===== $f ====="
+            tail -n 120 "$f" 2>/dev/null || true
+          done
+
+      - name: Upload capture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 2009scape-capture-diagnostics-${{ github.run_number }}
+          path: capture/
+          if-no-files-found: warn
+          retention-days: 7
