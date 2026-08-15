@@ -26,10 +26,15 @@ jobs:
           distribution: temurin
           java-version: "8"
 
-      - name: Install desktop capture tools
+      - name: Install minimal X11 tools
         run: |
+          echo "Preinstalled tools:"
+          command -v ffmpeg || true
+          command -v import || true
+          command -v Xvfb || true
+          command -v xdotool || true
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb xdotool imagemagick ffmpeg x11-apps
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xdotool
 
       - name: Fetch 2009Scape singleplayer
         run: |
@@ -74,8 +79,8 @@ jobs:
           java -jar client.jar >../capture/client.log 2>&1 & echo $! > ../capture/client.pid
           sleep 20
           xdotool search --onlyvisible --name 'RuneScape|2009|Client' getwindowname %@ >../capture/windows.txt 2>&1 || true
-          import -display :99 -window root ../capture/desktop.png || true
-          xwd -display :99 -root -silent -out ../capture/desktop.xwd || true
+          if command -v import >/dev/null; then import -display :99 -window root ../capture/desktop.png || true; fi
+          if command -v ffmpeg >/dev/null; then ffmpeg -y -f x11grab -video_size 1280x900 -i :99 -frames:v 1 ../capture/desktop_ffmpeg.png >/dev/null 2>&1 || true; fi
           ps aux > ../capture/processes.txt
           exit 0
 
