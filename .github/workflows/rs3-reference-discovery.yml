@@ -5,7 +5,7 @@ on:
     branches:
       - rs3-wiki-skill-image-runner
     paths:
-      - "tools/rs3_reference/**"
+      - "tools/rs3_reference/reference_discovery.py"
       - ".github/workflows/rs3-reference-discovery.yml"
   workflow_dispatch:
 
