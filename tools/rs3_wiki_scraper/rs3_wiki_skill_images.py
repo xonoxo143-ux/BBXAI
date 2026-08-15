@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Download RuneScape Wiki images associated with one or more skills.
+Download RuneScape Wiki reference images grouped by skill.
 
-The collector uses the RuneScape Wiki MediaWiki Action API rather than
-scraping rendered HTML. It recursively walks Category:<Skill>, finds images
-used by pages in that category tree, downloads original files, writes per-skill
-manifests, and creates a ZIP suitable for a GitHub Actions artifact.
+For Woodcutting, --tree-only narrows the scrape to tree resource pages and
+keeps one canonical tree render per page rather than every image referenced by
+the whole Woodcutting category tree. This is the default mode used by the
+GitHub Actions workflow on the rs3-wiki-skill-image-runner branch.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ DEFAULT_SKILLS = [
 ]
 
 USER_AGENT = (
-    "BBXAI-RS3-Skill-Image-Archiver/1.0 "
+    "BBXAI-RS3-Skill-Image-Archiver/1.1 "
     "(personal research/reference; MediaWiki API client)"
 )
 
@@ -57,12 +57,104 @@ DEFAULT_SKIP_PATTERNS = [
     r"(?i)\bskill icon\b",
 ]
 
+TREE_PAGE_INCLUDE = [
+    r"(?i)\btree\b",
+    r"(?i)\bevergreen\b",
+    r"(?i)\barctic pine\b",
+    r"(?i)\beucalyptus\b",
+    r"(?i)\bbloodwood\b",
+    r"(?i)\bblisterwood\b",
+]
+
+TREE_PAGE_EXCLUDE = [
+    r"(?i)\bstump\b",
+    r"(?i)\bsapling\b",
+    r"(?i)\bseed\b",
+    r"(?i)\bpatch\b",
+    r"(?i)\btree[- ]?shaking\b",
+    r"(?i)\bspirit tree\b",
+    r"(?i)\bevil tree\b",
+    r"(?i)\btree gnome\b",
+    r"(?i)\btreehouse\b",
+    r"(?i)\bcanopy\b",
+]
+
+TREE_IMAGE_EXCLUDE = [
+    r"(?i)\blogs?\b",
+    r"(?i)\bdetail\b",
+    r"(?i)\bicon\b",
+    r"(?i)\bmap\b",
+    r"(?i)\blocation\b",
+    r"(?i)\binterface\b",
+    r"(?i)\bupdate image\b",
+    r"(?i)\bevent\b",
+    r"(?i)\bfarm(?:ing)?\b",
+    r"(?i)\bpatch\b",
+    r"(?i)\bseed\b",
+    r"(?i)\bsapling\b",
+    r"(?i)\bstump\b",
+    r"(?i)\bcutting\b",
+    r"(?i)\bchopping\b",
+    r"(?i)\bequipped\b",
+    r"(?i)\bplayer\b",
+    r"(?i)\banimation\b",
+    r"(?i)\bbanner\b",
+    r"(?i)\bposter\b",
+    r"(?i)\bskillcape\b",
+]
+
 
 def safe_name(name: str) -> str:
     name = name.removeprefix("File:")
     name = name.replace("/", "_").replace("\\", "_")
     name = re.sub(r'[\x00-\x1f<>:"|?*]', "_", name)
     return name.strip() or "unnamed_file"
+
+
+def norm(text: str) -> str:
+    text = text.removeprefix("File:")
+    text = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", text)
+    text = text.replace("_", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().casefold()
+
+
+def is_tree_page(title: str) -> bool:
+    if any(re.search(p, title) for p in TREE_PAGE_EXCLUDE):
+        return False
+    return any(re.search(p, title) for p in TREE_PAGE_INCLUDE)
+
+
+def tree_image_score(page_title: str, image_title: str) -> int:
+    """Higher means more likely to be the clean canonical render for a page."""
+    if any(re.search(p, image_title) for p in TREE_IMAGE_EXCLUDE):
+        return -10_000
+
+    page = norm(page_title)
+    image = norm(image_title)
+    score = 0
+
+    if image == page:
+        score += 10_000
+    elif image == f"{page} tree":
+        score += 9_500
+    elif page in image:
+        score += 8_000
+    elif image in page and len(image) >= 5:
+        score += 6_000
+
+    if "tree" in image:
+        score += 1_000
+
+    # Prefer current canonical-looking filenames over dated/variant renders.
+    if not re.search(r"\([^)]*\)", image_title):
+        score += 300
+    if not re.search(r"\b(?:19|20)\d{2}\b", image_title):
+        score += 300
+    if image_title.casefold().endswith(".png"):
+        score += 100
+
+    return score
 
 
 class Wiki:
@@ -168,6 +260,20 @@ def rejected(title: str, skip_ui: bool) -> bool:
     return skip_ui and any(re.search(pattern, title) for pattern in DEFAULT_SKIP_PATTERNS)
 
 
+def canonical_tree_images(page_images: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+    """Keep one best candidate image for every tree page."""
+    selected: Dict[str, Set[str]] = defaultdict(set)
+    for page, images in page_images.items():
+        ranked = sorted(
+            ((tree_image_score(page, image), image) for image in images),
+            key=lambda x: (x[0], x[1]),
+            reverse=True,
+        )
+        if ranked and ranked[0][0] > 0:
+            selected[page].add(ranked[0][1])
+    return selected
+
+
 def sha1_file(path: Path) -> str:
     h = hashlib.sha1()
     with path.open("rb") as f:
@@ -207,6 +313,11 @@ def main():
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--out", default="rs3_wiki_skill_images")
     parser.add_argument("--keep-ui", action="store_true")
+    parser.add_argument(
+        "--tree-only",
+        action="store_true",
+        help="For Woodcutting, keep only canonical renders from tree resource pages",
+    )
     parser.add_argument("--no-zip", action="store_true")
     args = parser.parse_args()
 
@@ -217,6 +328,7 @@ def main():
     wiki = Wiki()
     global_manifest = []
     failures = []
+    tree_page_counts = {}
 
     for skill in skills:
         print(f"\n=== {skill} ===", flush=True)
@@ -225,11 +337,22 @@ def main():
 
         print("Walking categories...", flush=True)
         pages = sorted(wiki.pages_in_skill(skill, args.depth))
-        print(f"  {len(pages)} article pages", flush=True)
-        (skill_dir / "_pages.txt").write_text("\n".join(pages), encoding="utf-8")
+        print(f"  {len(pages)} article pages before mode filters", flush=True)
+
+        tree_mode = args.tree_only and skill.casefold() == "woodcutting"
+        if tree_mode:
+            pages = [p for p in pages if is_tree_page(p)]
+            tree_page_counts[skill] = len(pages)
+            print(f"  {len(pages)} likely tree resource pages", flush=True)
+            (skill_dir / "_tree_pages.txt").write_text("\n".join(pages), encoding="utf-8")
+        else:
+            (skill_dir / "_pages.txt").write_text("\n".join(pages), encoding="utf-8")
 
         print("Finding referenced images...", flush=True)
         page_images = wiki.images_on_pages(pages)
+        if tree_mode:
+            page_images = canonical_tree_images(page_images)
+
         image_to_pages: Dict[str, Set[str]] = defaultdict(set)
         for page, images in page_images.items():
             for image in images:
@@ -249,6 +372,8 @@ def main():
             if not ii or not ii.get("url"):
                 failures.append((skill, title, "No image URL returned"))
                 continue
+            if not str(ii.get("mime", "")).startswith("image/"):
+                continue
 
             filename = safe_name(title)
             if filename.lower() in used_names:
@@ -257,7 +382,12 @@ def main():
                 filename = f"{stem}_{idx}{dot}{ext}" if dot else f"{filename}_{idx}"
             used_names.add(filename.lower())
 
-            dest = skill_dir / filename
+            if tree_mode:
+                primary_page = sorted(image_to_pages[title])[0]
+                dest = skill_dir / "Trees" / safe_name(primary_page) / filename
+            else:
+                dest = skill_dir / filename
+
             try:
                 local_sha1 = download(wiki.s, ii["url"], dest)
             except Exception as exc:
@@ -268,7 +398,7 @@ def main():
             row = {
                 "skill": skill,
                 "file_title": title,
-                "filename": filename,
+                "filename": str(dest.relative_to(skill_dir)),
                 "source_url": ii["url"],
                 "mime": ii.get("mime", ""),
                 "width": ii.get("width", ""),
@@ -302,6 +432,8 @@ def main():
             "skills": skills,
             "depth": args.depth,
             "skip_ui": not args.keep_ui,
+            "tree_only": args.tree_only,
+            "tree_page_counts": tree_page_counts,
             "image_count": len(global_manifest),
             "failures": len(failures),
         }, indent=2),
