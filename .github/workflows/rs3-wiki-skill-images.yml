@@ -37,6 +37,11 @@ on:
         required: true
         default: false
         type: boolean
+      tree_only:
+        description: "For Woodcutting, keep one canonical render per tree resource page"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -51,6 +56,7 @@ jobs:
       SKILLS: ${{ github.event_name == 'workflow_dispatch' && inputs.skills || 'Woodcutting' }}
       DEPTH: ${{ github.event_name == 'workflow_dispatch' && inputs.depth || '3' }}
       KEEP_UI: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_ui || false }}
+      TREE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.tree_only || true }}
 
     steps:
       - name: Checkout branch
@@ -80,6 +86,10 @@ jobs:
 
           if [[ "$KEEP_UI" == "true" ]]; then
             ARGS+=(--keep-ui)
+          fi
+
+          if [[ "$TREE_ONLY" == "true" ]]; then
+            ARGS+=(--tree-only)
           fi
 
           python tools/rs3_wiki_scraper/rs3_wiki_skill_images.py \
