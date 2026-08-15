@@ -1,0 +1,22 @@
+{
+  "Guthixian torch.png": {
+    "status": "virtual_or_scenery_recipe_reference",
+    "replacement_reference": "Torch (Guthixian ruins, unlit).png",
+    "note": "The structured recipe names Guthixian torch.png, but the current Wiki exposes the Guthixian ruins torch as scenery with lit/unlit scenery images rather than a normal inventory sprite. Treat this as scenery art, not a missing inventory asset."
+  },
+  "Poisoned spike trap (blue).png": {
+    "status": "broken_wiki_inventory_file_link",
+    "replacement_reference": "Poisoned grenwall spikes (blue).png",
+    "note": "The current item page references this inventory filename but flags a broken file link. Its detailed image is a duplicate of the corresponding poisoned grenwall spikes detail image."
+  },
+  "Poisoned spike trap (green).png": {
+    "status": "broken_wiki_inventory_file_link",
+    "replacement_reference": "Poisoned grenwall spikes (green).png",
+    "note": "The current item page references this inventory filename but flags a broken file link. Its detailed image is a duplicate of the corresponding poisoned grenwall spikes detail image."
+  },
+  "Poisoned spike trap (purple).png": {
+    "status": "broken_wiki_inventory_file_link",
+    "replacement_reference": "Poisoned grenwall spikes (purple).png",
+    "note": "The current item page references this inventory filename but flags a broken file link. Its detailed image is a duplicate of the corresponding poisoned grenwall spikes detail image."
+  }
+}
