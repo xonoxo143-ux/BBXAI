@@ -31,4 +31,4 @@ This scan is useful for identifying odd arcs and building the anomaly-vetting ma
 python scan_zenodo.py --record 18441938 --workdir work --outdir output
 ```
 
-The GitHub Actions workflow runs the same scan and uploads `output/` as an artifact.
+The GitHub Actions workflow runs the same scan on pushes to this branch and uploads `output/` as an artifact.
