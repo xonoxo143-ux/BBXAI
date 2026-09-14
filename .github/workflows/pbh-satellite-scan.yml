@@ -41,17 +41,13 @@ jobs:
         working-directory: research/pbh_satellite_scan
         run: python scan_lageos.py --outdir output --top-per-column 40
 
-      - name: Probe raw ILRS coverage and orbit products
-        working-directory: research/pbh_satellite_scan
-        run: python probe_ilrs_2018.py
-
-      - name: Compare independent ILRS SP3 orbit solutions
-        working-directory: research/pbh_satellite_scan
-        run: python compare_ilrs_sp3.py
-
       - name: Rank all 2018 exact weekly boundaries
         working-directory: research/pbh_satellite_scan
         run: python scan_2018_boundaries.py
+
+      - name: Probe raw ILRS coverage and orbit products
+        working-directory: research/pbh_satellite_scan
+        run: python probe_ilrs_2018.py
 
       - name: Record exact Zenodo archive contents
         working-directory: research/pbh_satellite_scan
@@ -65,17 +61,13 @@ jobs:
           elif [ -f research/pbh_satellite_scan/output/SUMMARY.md ]; then
             cat research/pbh_satellite_scan/output/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f research/pbh_satellite_scan/output/sp3_2018_compare/SP3_SUMMARY.md ]; then
-            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-            cat research/pbh_satellite_scan/output/sp3_2018_compare/SP3_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
-          fi
           if [ -f research/pbh_satellite_scan/output/boundary_scan_2018/BOUNDARY_2018_SUMMARY.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat research/pbh_satellite_scan/output/boundary_scan_2018/BOUNDARY_2018_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload scan output
