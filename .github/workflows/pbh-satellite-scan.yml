@@ -28,18 +28,31 @@ jobs:
         run: pip install -r research/pbh_satellite_scan/requirements.txt
 
       - name: Generic Zenodo scan
+        continue-on-error: true
         working-directory: research/pbh_satellite_scan
         run: |
-          python scan_zenodo.py \
-            --record 18441938 \
-            --workdir work \
-            --outdir output \
-            --max-mb 250 \
-            --top-per-column 30
+          for attempt in 1 2 3 4; do
+            python scan_zenodo.py \
+              --record 18441938 \
+              --workdir work \
+              --outdir output \
+              --max-mb 250 \
+              --top-per-column 30 && break
+            if [ "$attempt" -eq 4 ]; then
+              echo "Generic Zenodo scan unavailable after retries; continuing with dedicated scans."
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Dedicated LAGEOS numeric scan
         working-directory: research/pbh_satellite_scan
-        run: python scan_lageos.py --outdir output --top-per-column 40
+        run: |
+          for attempt in 1 2 3 4; do
+            python scan_lageos.py --outdir output --top-per-column 40 && break
+            if [ "$attempt" -eq 4 ]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
 
       - name: Rank all 2018 exact weekly boundaries
         working-directory: research/pbh_satellite_scan
@@ -47,15 +60,31 @@ jobs:
 
       - name: Characterize February 2018 candidate
         working-directory: research/pbh_satellite_scan
-        run: python analyze_feb2018_candidate.py
+        run: |
+          for attempt in 1 2 3; do
+            python analyze_feb2018_candidate.py && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
 
       - name: Probe raw ILRS coverage and orbit products
         working-directory: research/pbh_satellite_scan
-        run: python probe_ilrs_2018.py
+        run: |
+          for attempt in 1 2 3; do
+            python probe_ilrs_2018.py && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
 
       - name: Record exact Zenodo archive contents
+        continue-on-error: true
         working-directory: research/pbh_satellite_scan
-        run: python inspect_zenodo.py --record 18441938 --out output/input_manifest.json
+        run: |
+          for attempt in 1 2 3; do
+            python inspect_zenodo.py --record 18441938 --out output/input_manifest.json && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 10))
+          done
 
       - name: Build normalized event catalog
         working-directory: research/pbh_satellite_scan
