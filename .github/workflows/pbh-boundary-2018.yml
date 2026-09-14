@@ -1,0 +1,48 @@
+name: PBH LAGEOS 2018 boundary control
+
+on:
+  push:
+    branches:
+      - pbh-satellite-scan
+    paths:
+      - "research/pbh_satellite_scan/scan_2018_boundaries.py"
+      - ".github/workflows/pbh-boundary-2018.yml"
+  workflow_dispatch:
+
+jobs:
+  exact-boundary-control:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install numerical dependency
+        run: pip install numpy requests
+
+      - name: Rank all 2018 exact shared weekly boundaries
+        working-directory: research/pbh_satellite_scan
+        run: python scan_2018_boundaries.py
+
+      - name: Publish result
+        if: always()
+        run: |
+          if [ -f research/pbh_satellite_scan/output/boundary_scan_2018/BOUNDARY_2018_SUMMARY.md ]; then
+            cat research/pbh_satellite_scan/output/boundary_scan_2018/BOUNDARY_2018_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload control scan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pbh-lageos-2018-boundaries
+          path: research/pbh_satellite_scan/output/boundary_scan_2018/
+          if-no-files-found: warn
+          retention-days: 30
