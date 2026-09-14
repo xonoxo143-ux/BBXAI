@@ -37,6 +37,10 @@ jobs:
             --max-mb 250 \
             --top-per-column 30
 
+      - name: Record exact Zenodo archive contents
+        working-directory: research/pbh_satellite_scan
+        run: python inspect_zenodo.py --record 18441938 --out output/input_manifest.json
+
       - name: Publish summary to workflow page
         if: always()
         run: |
