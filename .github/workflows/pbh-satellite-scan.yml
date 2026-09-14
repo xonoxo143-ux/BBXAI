@@ -45,6 +45,10 @@ jobs:
         working-directory: research/pbh_satellite_scan
         run: python probe_ilrs_2018.py
 
+      - name: Compare independent ILRS SP3 orbit solutions
+        working-directory: research/pbh_satellite_scan
+        run: python compare_ilrs_sp3.py
+
       - name: Record exact Zenodo archive contents
         working-directory: research/pbh_satellite_scan
         run: python inspect_zenodo.py --record 18441938 --out output/input_manifest.json
@@ -60,6 +64,10 @@ jobs:
           if [ -f research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md ]; then
             printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
             cat research/pbh_satellite_scan/output/ilrs_2018_probe/PROBE_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f research/pbh_satellite_scan/output/sp3_2018_compare/SP3_SUMMARY.md ]; then
+            printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+            cat research/pbh_satellite_scan/output/sp3_2018_compare/SP3_SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload scan output
