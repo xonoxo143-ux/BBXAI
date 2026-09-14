@@ -10,6 +10,8 @@ from pathlib import Path
 
 import requests
 
+BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".gz", ".tar", ".xlsx", ".xls"}
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -45,8 +47,17 @@ def main() -> int:
         with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
             for info in zf.infolist():
                 member = {"archive": name, "name": info.filename, "size": info.file_size}
+                if not info.is_dir() and Path(info.filename).suffix.lower() not in BINARY_EXTS and info.file_size <= 2_000_000:
+                    raw = zf.read(info.filename)[:4096]
+                    try:
+                        preview = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        preview = raw.decode("latin-1", errors="replace")
+                    member["preview"] = preview
                 manifest["archive_members"].append(member)
                 print("  MEMBER", info.filename, info.file_size)
+                if "preview" in member:
+                    print(member["preview"][:1200])
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
