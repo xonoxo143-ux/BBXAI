@@ -48,7 +48,6 @@ def parse_crd(text: str, sat: str) -> tuple[list[dict], list[dict]]:
                     "station_id": parts[2],
                 }
             elif rec == "h4" and len(parts) >= 14:
-                # h4 1 YYYY MM DD hh mm ss YYYY MM DD hh mm ss ...
                 start = datetime(
                     int(parts[2]), int(parts[3]), int(parts[4]),
                     int(parts[5]), int(parts[6]), int(float(parts[7])),
@@ -91,8 +90,6 @@ def mjd(dt: datetime) -> float:
 
 
 def arc_start_for_date(dt: datetime) -> datetime:
-    # Published observable epochs are Fridays separated by 7 days.
-    # Anchor on MJD 58151 = 2018-02-02.
     anchor = datetime(2018, 2, 2, tzinfo=timezone.utc)
     delta_days = (dt.date() - anchor.date()).days
     k = delta_days // 7
@@ -173,15 +170,14 @@ def main() -> int:
     write_csv(out / "station_arc_coverage.csv", agg)
 
     orbit_dirs = []
-    # Sundays bracketing the candidate and adjacent weeks.
+    # ILRS precise-orbit directories are labeled by the Saturday ending the solution week.
     for sat in ("lageos1", "lageos2"):
-        for week in ("180121", "180128", "180204", "180211", "180218"):
+        for week in ("180120", "180127", "180203", "180210", "180217", "180224"):
             orbit_dirs.append(directory_listing(BASE_ORB.format(sat=sat, week=week)))
 
     (out / "downloads.json").write_text(json.dumps(downloads, indent=2), encoding="utf-8")
     (out / "orbit_directories.json").write_text(json.dumps(orbit_dirs, indent=2), encoding="utf-8")
 
-    # Human-readable coverage table for the candidate arcs and neighbors.
     focus_arcs = {"2018-01-19", "2018-01-26", "2018-02-02", "2018-02-09", "2018-02-16", "2018-02-23"}
     lines = [
         "# ILRS raw-data probe around the February 2018 LAGEOS-I candidate",
